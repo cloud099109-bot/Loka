@@ -1,685 +1,834 @@
--- LocalScript: StarterPlayer > StarterPlayerScripts
-local Players = game:GetService("Players")
-local UIS = game:GetService("UserInputService")
+
+--[[
+    AXIOM PANEL | STUDIO DEBUG BUILD
+    Location: StarterPlayer > StarterPlayerScripts
+    Environment: Roblox Studio only
+
+    Features:
+      - Draggable panel with circular minimize/restore button
+      - Performance mode
+      - Player outline ESP for local testing
+      - Walk speed
+      - Jump power
+      - Infinite jump
+      - Fly
+      - Clean toggle states and character respawn handling
+
+    This is a local testing UI, not an anti-cheat bypass.
+]]
+
 local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
 local Lighting = game:GetService("Lighting")
-local Camera = workspace.CurrentCamera
+local Workspace = game:GetService("Workspace")
 
-local player = Players.LocalPlayer
-
-local SPEED_VALUE, JUMP_VALUE, FLY_SPEED = 50, 120, 60
-local DEFAULT_SPEED, DEFAULT_JUMP = 16, 50
-
-local state = {
-    Fly = false, FlyNoclip = false, Speed = false, HighJump = false,
-    InfJump = false, ESP = false, ESPName = false, ESPNPC = false, ESPPlayer = true,
-    FPS = false, FPSv2 = false, Aimbot = false,
-}
-local savedPosition = nil
-local travelSpeed = 60
-local stepDistance = 8
-local travelToken = 0
-local travelBusy = false
-
--- ===== HELPERS =====
-local function getChar()
-    local c = player.Character
-    if not c then return end
-    return c:FindFirstChildOfClass("Humanoid"), c:FindFirstChild("HumanoidRootPart")
+if not RunService:IsStudio() then
+    warn("[Axiom] Studio-only debug panel.")
+    return
 end
 
-local function stopTravel()
-    travelToken += 1
-    travelBusy = false
-    local hum = getChar()
-    if hum then hum.PlatformStand = false end
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+-- Prevent duplicate panels after re-execution.
+local previous = PlayerGui:FindFirstChild("AxiomPanel")
+if previous then
+    previous:Destroy()
 end
 
-local function savePosition()
-    local _, root = getChar()
-    if root then savedPosition = root.CFrame; return true end
-    return false
-end
-
-local function teleportToSaved()
-    local _, root = getChar()
-    if root and savedPosition then
-        stopTravel()
-        root.CFrame = savedPosition
-        return true
-    end
-    return false
-end
-
-local function flyToSaved()
-    local hum, root = getChar()
-    if not hum or not root or not savedPosition or travelBusy then return end
-    travelToken += 1
-    local token = travelToken
-    travelBusy = true
-    hum.PlatformStand = true
-    task.spawn(function()
-        while token == travelToken do
-            local _, curRoot = getChar()
-            if not curRoot then break end
-            local offset = savedPosition.Position - curRoot.Position
-            local dist = offset.Magnitude
-            if dist <= 2 then curRoot.CFrame = savedPosition; break end
-            local dt = RunService.Heartbeat:Wait()
-            if token ~= travelToken then break end
-            local step = math.min(dist, math.max(1, travelSpeed) * math.min(dt, 0.05))
-            local np = curRoot.Position + offset.Unit * step
-            curRoot.CFrame = CFrame.new(np, np + curRoot.CFrame.LookVector)
-        end
-        local h = getChar()
-        if h then h.PlatformStand = false end
-        if token == travelToken then travelBusy = false end
-    end)
-end
-
-local function stepTeleportToSaved()
-    local _, root = getChar()
-    if not root or not savedPosition or travelBusy then return end
-    travelToken += 1
-    local token = travelToken
-    travelBusy = true
-    task.spawn(function()
-        while token == travelToken do
-            local _, curRoot = getChar()
-            if not curRoot then break end
-            local offset = savedPosition.Position - curRoot.Position
-            local dist = offset.Magnitude
-            if dist <= stepDistance then curRoot.CFrame = savedPosition; break end
-            curRoot.CFrame = curRoot.CFrame + offset.Unit * stepDistance
-            task.wait(0.08)
-        end
-        if token == travelToken then travelBusy = false end
-    end)
-end
-
-local function applyStats()
-    local hum = getChar()
-    if not hum then return end
-    hum.WalkSpeed = state.Speed and SPEED_VALUE or DEFAULT_SPEED
-    hum.UseJumpPower = true
-    hum.JumpPower = state.HighJump and JUMP_VALUE or DEFAULT_JUMP
-end
-
--- ===== FLY =====
-local flyConn
-local function setFly(on)
-    if flyConn then flyConn:Disconnect(); flyConn = nil end
-    local hum, root = getChar()
-    if hum then hum.PlatformStand = false end
-    if not on or not root then return end
-
-    hum.PlatformStand = true
-
-    flyConn = RunService.RenderStepped:Connect(function(dt)
-        local h, r = getChar()
-        if not h or not r then return end
-
-        local speed = FLY_SPEED
-        local dir = h.MoveDirection
-
-        local vert = 0
-        if UIS:IsKeyDown(Enum.KeyCode.Space) then vert = 1 end
-        if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then vert = -1 end
-
-        if UIS.TouchEnabled then
-            if h:GetState() == Enum.HumanoidStateType.Jumping then vert = 1 end
-            if _G.FlyDown then vert = -1 end
-        end
-
-        local move = Vector3.new(dir.X, 0, dir.Z) * speed
-        move = move + Vector3.new(0, vert * speed, 0)
-
-        r.CFrame = r.CFrame + (move * dt)
-        r.Velocity = Vector3.zero
-        r.RotVelocity = Vector3.zero
-    end)
-end
-
--- ===== INF JUMP =====
-UIS.JumpRequest:Connect(function()
-    if state.InfJump then
-        local hum = getChar()
-        if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
-    end
-end)
-
--- ===== AIMBOT =====
-local aimbotConn = nil
-local aimbotActive = false
-
-local function getClosestPlayer()
-    local closest, shortest = nil, math.huge
-    local screenCenter = Camera.ViewportSize / 2
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= player and p.Character then
-            local head = p.Character:FindFirstChild("Head")
-            local hum = p.Character:FindFirstChildOfClass("Humanoid")
-            if head and hum and hum.Health > 0 then
-                local sp, onScreen = Camera:WorldToViewportPoint(head.Position)
-                if onScreen then
-                    local d = (Vector2.new(sp.X, sp.Y) - screenCenter).Magnitude
-                    if d < shortest then shortest = d; closest = p end
-                end
-            end
-        end
-    end
-    return closest
-end
-
-local function setAimbot(on)
-    if aimbotConn then aimbotConn:Disconnect(); aimbotConn = nil end
-    if not on then return end
-    aimbotConn = RunService.RenderStepped:Connect(function()
-        local shouldAim = state.Aimbot
-        if shouldAim and not UIS.TouchEnabled then
-            shouldAim = UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
-        elseif shouldAim and UIS.TouchEnabled then
-            shouldAim = aimbotActive
-        end
-        if shouldAim then
-            local t = getClosestPlayer()
-            if t and t.Character then
-                local head = t.Character:FindFirstChild("Head")
-                if head then
-                    Camera.CFrame = CFrame.new(Camera.CFrame.Position, head.Position)
-                end
-            end
-        end
-    end)
-end
-
--- ===== ESP =====
-local highlights = {}
-local billboards = {}
-
-local function clearOneESP(p)
-    if highlights[p] then highlights[p]:Destroy(); highlights[p] = nil end
-    if billboards[p] then billboards[p]:Destroy(); billboards[p] = nil end
-end
-
-local function addESP(p)
-    if p == player or not p.Character then return end
-    local isPlayer = Players:GetPlayerFromCharacter(p.Character) ~= nil
-    if isPlayer and not state.ESPPlayer then clearOneESP(p); return end
-    if (not isPlayer) and not state.ESPNPC then clearOneESP(p); return end
-
-    clearOneESP(p)
-
-    local h = Instance.new("Highlight")
-    h.FillTransparency = 1
-    h.OutlineColor = isPlayer and Color3.fromRGB(255, 60, 60) or Color3.fromRGB(255, 200, 60)
-    h.OutlineTransparency = 0
-    h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    h.Parent = p.Character
-    highlights[p] = h
-
-    if state.ESPName then
-        local head = p.Character:FindFirstChild("Head")
-        if head then
-            local bb = Instance.new("BillboardGui")
-            bb.Size = UDim2.fromOffset(140, 24)
-            bb.StudsOffset = Vector3.new(0, 2.5, 0)
-            bb.AlwaysOnTop = true
-            bb.Parent = head
-            local lbl = Instance.new("TextLabel")
-            lbl.Size = UDim2.fromScale(1, 1)
-            lbl.BackgroundTransparency = 1
-            lbl.Text = p.Name
-            lbl.TextColor3 = isPlayer and Color3.fromRGB(255, 80, 80) or Color3.fromRGB(255, 200, 60)
-            lbl.TextStrokeTransparency = 0
-            lbl.TextScaled = true
-            lbl.Font = Enum.Font.GothamBold
-            lbl.Parent = bb
-            billboards[p] = bb
-        end
-    end
-end
-
-local function clearESP()
-    for p in pairs(highlights) do clearOneESP(p) end
-    for p in pairs(billboards) do clearOneESP(p) end
-    table.clear(highlights)
-    table.clear(billboards)
-end
-
-local function setESP(on)
-    clearESP()
-    if on then
-        for _, p in ipairs(Players:GetPlayers()) do addESP(p) end
-    end
-end
-
-local function refreshESP()
-    if state.ESP then setESP(true) end
-end
-
-local function watch(p)
-    p.CharacterAdded:Connect(function()
-        task.wait(0.5)
-        if state.ESP then addESP(p) end
-    end)
-    p.CharacterRemoving:Connect(function() clearOneESP(p) end)
-end
-for _, p in ipairs(Players:GetPlayers()) do watch(p) end
-Players.PlayerAdded:Connect(watch)
-Players.PlayerRemoving:Connect(function(p) clearOneESP(p) end)
-
--- ===== FIX LAG v1 =====
-local disabled = {}
-local oldShadows = Lighting.GlobalShadows
-local function setFPS(on)
-    if on then
-        oldShadows = Lighting.GlobalShadows
-        Lighting.GlobalShadows = false
-        pcall(function()
-            local US = UserSettings and UserSettings() or nil
-            if US then
-                local gs = US:GetService("UserGameSettings")
-                if gs then gs.SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel1 end
-            end
-        end)
-        for _, d in ipairs(workspace:GetDescendants()) do
-            if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
-                if d.Enabled then d.Enabled = false; table.insert(disabled, d) end
-            end
-        end
-        for _, e in ipairs(Lighting:GetChildren()) do
-            if e:IsA("PostEffect") and e.Enabled then e.Enabled = false; table.insert(disabled, e) end
-        end
-    else
-        Lighting.GlobalShadows = oldShadows
-        for _, d in ipairs(disabled) do if d.Parent then d.Enabled = true end end
-        table.clear(disabled)
-    end
-end
-
--- ===== FIX LAG v2 =====
-local hiddenGuis = {}
-local myGui
-
-local function setFPSv2(on)
-    if on then
-        hiddenGuis = {}
-        local pg = player:FindFirstChild("PlayerGui")
-        if pg then
-            for _, g in ipairs(pg:GetChildren()) do
-                if g ~= myGui and g:IsA("ScreenGui") and g.Enabled then
-                    g.Enabled = false
-                    table.insert(hiddenGuis, g)
-                end
-            end
-        end
-        pcall(function()
-            local StarterGui = game:GetService("StarterGui")
-            StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false)
-        end)
-        pcall(function()
-            Lighting.GlobalShadows = false
-            Lighting.FogEnd = 1e6
-            Lighting.Brightness = 3
-            Lighting.Ambient = Color3.fromRGB(255, 255, 255)
-            Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
-            Lighting.EnvironmentDiffuseScale = 1
-            Lighting.EnvironmentSpecularScale = 1
-            Lighting.ClockTime = 12
-        end)
-    else
-        for _, g in ipairs(hiddenGuis) do
-            if g and g.Parent then g.Enabled = true end
-        end
-        table.clear(hiddenGuis)
-        pcall(function()
-            local StarterGui = game:GetService("StarterGui")
-            StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, true)
-        end)
-        Lighting.Ambient = Color3.fromRGB(70, 70, 70)
-        Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128)
-        Lighting.Brightness = 2
-    end
-end
-
-local handlers = {
-    Fly = setFly, Speed = applyStats, HighJump = applyStats,
-    InfJump = function() end,
-    ESP = setESP, FPS = setFPS, FPSv2 = setFPSv2,
-    Aimbot = setAimbot,
-    ESPName = refreshESP,
-    ESPNPC = refreshESP,
-    ESPPlayer = refreshESP,
-    FlyNoclip = function() end,
+local Config = {
+    WalkSpeed = 28,
+    JumpPower = 75,
+    FlySpeed = 55,
+    FlyVerticalSpeed = 42,
 }
 
-player.CharacterAdded:Connect(function()
-    task.wait(0.5)
-    applyStats()
-    if state.Fly then setFly(true) end
-end)
-
--- ===== GIAO DIỆN =====
-local C = {
-    bg      = Color3.fromRGB(18, 18, 24),
-    bar     = Color3.fromRGB(28, 28, 38),
-    off     = Color3.fromRGB(48, 48, 60),
-    on      = Color3.fromRGB(46, 170, 92),
-    on2     = Color3.fromRGB(200, 140, 40),
-    action  = Color3.fromRGB(58, 90, 140),
-    danger  = Color3.fromRGB(190, 60, 60),
-    input   = Color3.fromRGB(38, 38, 48),
-    text    = Color3.fromRGB(240, 240, 245),
-    sub     = Color3.fromRGB(150, 150, 165),
+local State = {
+    Performance = false,
+    ESP = false,
+    Speed = false,
+    HighJump = false,
+    InfiniteJump = false,
+    Fly = false,
 }
 
-local function round(obj, r)
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, r)
-    c.Parent = obj
-    return c
+local Connections = {}
+local Highlights = {}
+local OriginalLighting = {}
+local OriginalVisuals = {}
+local CharacterConnections = {}
+
+local Character
+local Humanoid
+local RootPart
+
+local FlyAttachment
+local FlyVelocity
+local FlyOrientation
+local FlyConnection
+
+local function track(connection)
+    table.insert(Connections, connection)
+    return connection
 end
 
-local function style(obj, bg)
-    obj.BackgroundColor3 = bg
-    obj.TextColor3 = C.text
-    obj.Font = Enum.Font.GothamMedium
-    obj.TextSize = 13
-    obj.AutoButtonColor = true
-    round(obj, 8)
+local function disconnect(connection)
+    if connection then
+        connection:Disconnect()
+    end
 end
 
-local gui = Instance.new("ScreenGui")
-gui.Name = "AdminPanel"
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
-gui.Parent = player:WaitForChild("PlayerGui")
-myGui = gui
-
-local FULL_W, FULL_H, BAR_H = 620, 340, 36
-
-local main = Instance.new("Frame")
-main.Name = "Main"
-main.AnchorPoint = Vector2.new(0.5, 0.5)
-main.Position = UDim2.fromScale(0.5, 0.5)
-main.Size = UDim2.fromOffset(FULL_W, FULL_H)
-main.BackgroundColor3 = C.bg
-main.ClipsDescendants = true
-main.Active = true
-main.Parent = gui
-round(main, 12)
-
-local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(70, 70, 95)
-stroke.Thickness = 1
-stroke.Parent = main
-
-local uiScale = Instance.new("UIScale")
-uiScale.Parent = main
-local function updateScale()
-    local vp = Camera.ViewportSize
-    uiScale.Scale = math.clamp(math.min((vp.X - 20) / FULL_W, (vp.Y - 20) / FULL_H), 0.4, 1)
+local function getCharacter()
+    Character = LocalPlayer.Character
+    Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+    RootPart = Character and Character:FindFirstChild("HumanoidRootPart")
+    return Character, Humanoid, RootPart
 end
-updateScale()
-Camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateScale)
 
--- Thanh tiêu đề
-local bar = Instance.new("Frame")
-bar.Size = UDim2.new(1, 0, 0, BAR_H)
-bar.BackgroundColor3 = C.bar
-bar.BorderSizePixel = 0
-bar.Parent = main
+--==================================================
+-- GUI
+--==================================================
 
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -90, 1, 0)
-title.Position = UDim2.fromOffset(14, 0)
-title.BackgroundTransparency = 1
-title.Text = "⚡ ADMIN PANEL"
-title.TextColor3 = C.text
-title.Font = Enum.Font.GothamBold
-title.TextSize = 15
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.Parent = bar
+local GUI = Instance.new("ScreenGui")
+GUI.Name = "AxiomPanel"
+GUI.ResetOnSpawn = false
+GUI.IgnoreGuiInset = false
+GUI.DisplayOrder = 100
+GUI.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+GUI.Parent = PlayerGui
 
-local mini = Instance.new("TextButton")
-mini.Size = UDim2.fromOffset(30, 24)
-mini.Position = UDim2.new(1, -40, 0.5, -12)
-mini.Text = "–"
-style(mini, C.off)
-mini.TextSize = 16
-mini.ZIndex = 5
-mini.Parent = bar
+local function create(className, properties, parent)
+    local object = Instance.new(className)
+    for property, value in pairs(properties or {}) do
+        object[property] = value
+    end
+    object.Parent = parent
+    return object
+end
 
--- Kéo thả bảng
-do
-    local dragging, dragStart, startPos
-    bar.InputBegan:Connect(function(input)
+local function corner(parent, radius)
+    return create("UICorner", {
+        CornerRadius = UDim.new(0, radius),
+    }, parent)
+end
+
+local function stroke(parent, color, thickness, transparency)
+    return create("UIStroke", {
+        Color = color,
+        Thickness = thickness or 1,
+        Transparency = transparency or 0,
+    }, parent)
+end
+
+local COLORS = {
+    Background = Color3.fromRGB(17, 19, 27),
+    Panel = Color3.fromRGB(25, 28, 39),
+    Row = Color3.fromRGB(34, 38, 52),
+    Accent = Color3.fromRGB(104, 105, 255),
+    Active = Color3.fromRGB(69, 190, 137),
+    Text = Color3.fromRGB(241, 243, 255),
+    Muted = Color3.fromRGB(155, 161, 184),
+    Danger = Color3.fromRGB(230, 91, 105),
+}
+
+local Main = create("Frame", {
+    Name = "Main",
+    Size = UDim2.fromOffset(310, 420),
+    Position = UDim2.new(0.5, -155, 0.5, -210),
+    BackgroundColor3 = COLORS.Background,
+    BorderSizePixel = 0,
+    ClipsDescendants = true,
+}, GUI)
+corner(Main, 14)
+stroke(Main, COLORS.Accent, 1.5, 0.25)
+
+local Header = create("Frame", {
+    Name = "Header",
+    Size = UDim2.new(1, 0, 0, 54),
+    BackgroundColor3 = COLORS.Panel,
+    BorderSizePixel = 0,
+}, Main)
+corner(Header, 14)
+
+-- Cover the lower rounded corners of the header.
+create("Frame", {
+    Size = UDim2.new(1, 0, 0, 14),
+    Position = UDim2.new(0, 0, 1, -14),
+    BackgroundColor3 = COLORS.Panel,
+    BorderSizePixel = 0,
+}, Header)
+
+create("TextLabel", {
+    Name = "Title",
+    Position = UDim2.fromOffset(14, 7),
+    Size = UDim2.new(1, -90, 0, 23),
+    BackgroundTransparency = 1,
+    Text = "AXIOM  /  CONTROL",
+    TextColor3 = COLORS.Text,
+    TextSize = 15,
+    Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Left,
+}, Header)
+
+create("TextLabel", {
+    Position = UDim2.fromOffset(15, 30),
+    Size = UDim2.new(1, -90, 0, 15),
+    BackgroundTransparency = 1,
+    Text = "STUDIO DEBUG BUILD",
+    TextColor3 = COLORS.Muted,
+    TextSize = 9,
+    Font = Enum.Font.GothamMedium,
+    TextXAlignment = Enum.TextXAlignment.Left,
+}, Header)
+
+local Minimize = create("TextButton", {
+    Name = "Minimize",
+    Size = UDim2.fromOffset(32, 32),
+    Position = UDim2.new(1, -42, 0, 11),
+    BackgroundColor3 = COLORS.Accent,
+    BorderSizePixel = 0,
+    Text = "—",
+    TextColor3 = COLORS.Text,
+    TextSize = 19,
+    Font = Enum.Font.GothamBold,
+    AutoButtonColor = true,
+}, Header)
+corner(Minimize, 10)
+
+local Content = create("ScrollingFrame", {
+    Name = "Content",
+    Position = UDim2.fromOffset(10, 62),
+    Size = UDim2.new(1, -20, 1, -72),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ScrollBarThickness = 3,
+    ScrollBarImageColor3 = COLORS.Accent,
+    CanvasSize = UDim2.fromOffset(0, 0),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+}, Main)
+
+create("UIListLayout", {
+    Padding = UDim.new(0, 7),
+    SortOrder = Enum.SortOrder.LayoutOrder,
+}, Content)
+
+create("UIPadding", {
+    PaddingBottom = UDim.new(0, 8),
+}, Content)
+
+-- Floating circular restore button.
+local Bubble = create("TextButton", {
+    Name = "AxiomBubble",
+    Size = UDim2.fromOffset(54, 54),
+    Position = UDim2.new(0, 20, 0.5, -27),
+    BackgroundColor3 = COLORS.Accent,
+    BorderSizePixel = 0,
+    Text = "A",
+    TextColor3 = COLORS.Text,
+    TextSize = 24,
+    Font = Enum.Font.GothamBlack,
+    Visible = false,
+    AutoButtonColor = true,
+    ZIndex = 10,
+}, GUI)
+corner(Bubble, 100)
+stroke(Bubble, Color3.fromRGB(195, 194, 255), 2, 0.1)
+
+local function makeDraggable(target, handle)
+    local dragging = false
+    local dragStart
+    local startPosition
+    local activeInput
+
+    track(handle.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
+            or input.UserInputType == Enum.UserInputType.Touch then
+
             dragging = true
             dragStart = input.Position
-            startPos = main.Position
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            startPosition = target.Position
+            activeInput = input
+
+            local endedConnection
+            endedConnection = input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                    disconnect(endedConnection)
+                end
             end)
         end
+    end))
+
+    track(UserInputService.InputChanged:Connect(function(input)
+        if not dragging then
+            return
+        end
+
+        local validInput =
+            input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch
+
+        if validInput then
+            local delta = input.Position - dragStart
+            target.Position = UDim2.new(
+                startPosition.X.Scale,
+                startPosition.X.Offset + delta.X,
+                startPosition.Y.Scale,
+                startPosition.Y.Offset + delta.Y
+            )
+        end
+    end))
+end
+
+makeDraggable(Main, Header)
+makeDraggable(Bubble, Bubble)
+
+local minimized = false
+
+local function setMinimized(value)
+    minimized = value
+    Main.Visible = not value
+    Bubble.Visible = value
+end
+
+track(Minimize.Activated:Connect(function()
+    setMinimized(true)
+end))
+
+track(Bubble.Activated:Connect(function()
+    setMinimized(false)
+end))
+
+--==================================================
+-- Toggle controls
+--==================================================
+
+local function addSection(text)
+    return create("TextLabel", {
+        Size = UDim2.new(1, -2, 0, 25),
+        BackgroundTransparency = 1,
+        Text = string.upper(text),
+        TextColor3 = COLORS.Muted,
+        TextSize = 10,
+        Font = Enum.Font.GothamBold,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    }, Content)
+end
+
+local function addToggle(label, description, callback)
+    local row = create("Frame", {
+        Name = label:gsub("%s+", ""),
+        Size = UDim2.new(1, -2, 0, 52),
+        BackgroundColor3 = COLORS.Row,
+        BorderSizePixel = 0,
+    }, Content)
+    corner(row, 9)
+
+    create("TextLabel", {
+        Position = UDim2.fromOffset(11, 7),
+        Size = UDim2.new(1, -86, 0, 19),
+        BackgroundTransparency = 1,
+        Text = label,
+        TextColor3 = COLORS.Text,
+        TextSize = 12,
+        Font = Enum.Font.GothamSemibold,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    }, row)
+
+    create("TextLabel", {
+        Position = UDim2.fromOffset(11, 27),
+        Size = UDim2.new(1, -86, 0, 15),
+        BackgroundTransparency = 1,
+        Text = description or "",
+        TextColor3 = COLORS.Muted,
+        TextSize = 9,
+        Font = Enum.Font.Gotham,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+    }, row)
+
+    local enabled = false
+
+    local button = create("TextButton", {
+        Position = UDim2.new(1, -64, 0.5, -12),
+        Size = UDim2.fromOffset(53, 25),
+        BackgroundColor3 = COLORS.Background,
+        BorderSizePixel = 0,
+        Text = "OFF",
+        TextColor3 = COLORS.Muted,
+        TextSize = 10,
+        Font = Enum.Font.GothamBold,
+        AutoButtonColor = true,
+    }, row)
+    corner(button, 8)
+
+    local function render()
+        button.BackgroundColor3 = enabled and COLORS.Active
+            or COLORS.Background
+        button.TextColor3 = enabled and Color3.new(1, 1, 1)
+            or COLORS.Muted
+        button.Text = enabled and "ON" or "OFF"
+    end
+
+    local function setEnabled(value)
+        if enabled == value then
+            return
+        end
+
+        enabled = value
+        render()
+
+        local ok, err = pcall(callback, enabled)
+        if not ok then
+            warn("[Axiom] " .. label .. ": " .. tostring(err))
+            enabled = false
+            render()
+            pcall(callback, false)
+        end
+    end
+
+    track(button.Activated:Connect(function()
+        setEnabled(not enabled)
+    end))
+
+    return {
+        Set = setEnabled,
+        Get = function()
+            return enabled
+        end,
+    }
+end
+
+--==================================================
+-- Player outlines for Studio testing
+--==================================================
+
+local function removeHighlight(player)
+    local highlight = Highlights[player]
+    if highlight then
+        highlight:Destroy()
+        Highlights[player] = nil
+    end
+end
+
+local function addHighlight(player)
+    if player == LocalPlayer or not State.ESP then
+        return
+    end
+
+    local character = player.Character
+    if not character then
+        return
+    end
+
+    local old = Highlights[player]
+    if old and old.Parent == character then
+        return
+    end
+
+    removeHighlight(player)
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "AxiomDebugHighlight"
+    highlight.Adornee = character
+    highlight.FillColor = Color3.fromRGB(105, 105, 255)
+    highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+    highlight.FillTransparency = 0.82
+    highlight.OutlineTransparency = 0
+    highlight.DepthMode = Enum.HighlightDepthMode.Occluded
+    highlight.Parent = character
+
+    Highlights[player] = highlight
+end
+
+local function refreshHighlights()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            if State.ESP then
+                addHighlight(player)
+            else
+                removeHighlight(player)
+            end
+        end
+    end
+end
+
+local function setupPlayer(player)
+    if player == LocalPlayer then
+        return
+    end
+
+    local conn = player.CharacterAdded:Connect(function()
+        task.wait(0.25)
+        if State.ESP then
+            addHighlight(player)
+        end
     end)
-    UIS.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
-        or input.UserInputType == Enum.UserInputType.Touch) then
-            local d = (input.Position - dragStart) / uiScale.Scale
-            main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
-                                      startPos.Y.Scale, startPos.Y.Offset + d.Y)
+    table.insert(CharacterConnections, conn)
+
+    if State.ESP then
+        addHighlight(player)
+    end
+end
+
+for _, player in ipairs(Players:GetPlayers()) do
+    setupPlayer(player)
+end
+
+track(Players.PlayerAdded:Connect(setupPlayer))
+
+track(Players.PlayerRemoving:Connect(function(player)
+    removeHighlight(player)
+end))
+
+--==================================================
+-- Performance mode
+--==================================================
+
+local function applyPerformance(enabled)
+    if enabled then
+        OriginalLighting.GlobalShadows = Lighting.GlobalShadows
+        OriginalLighting.FogEnd = Lighting.FogEnd
+        OriginalLighting.EnvironmentDiffuseScale =
+            Lighting.EnvironmentDiffuseScale
+        OriginalLighting.EnvironmentSpecularScale =
+            Lighting.EnvironmentSpecularScale
+
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = 100000
+        Lighting.EnvironmentDiffuseScale = 0
+        Lighting.EnvironmentSpecularScale = 0
+
+        for _, object in ipairs(Workspace:GetDescendants()) do
+            if object:IsA("ParticleEmitter")
+                or object:IsA("Trail")
+                or object:IsA("Beam")
+                or object:IsA("Fire")
+                or object:IsA("Smoke")
+                or object:IsA("Sparkles") then
+
+                if OriginalVisuals[object] == nil then
+                    OriginalVisuals[object] = object.Enabled
+                end
+                object.Enabled = false
+            end
+        end
+    else
+        for property, value in pairs(OriginalLighting) do
+            pcall(function()
+                Lighting[property] = value
+            end)
+        end
+        table.clear(OriginalLighting)
+
+        for object, wasEnabled in pairs(OriginalVisuals) do
+            if object and object.Parent then
+                pcall(function()
+                    object.Enabled = wasEnabled
+                end)
+            end
+        end
+        table.clear(OriginalVisuals)
+    end
+end
+
+track(Workspace.DescendantAdded:Connect(function(object)
+    if not State.Performance then
+        return
+    end
+
+    if object:IsA("ParticleEmitter")
+        or object:IsA("Trail")
+        or object:IsA("Beam")
+        or object:IsA("Fire")
+        or object:IsA("Smoke")
+        or object:IsA("Sparkles") then
+
+        if OriginalVisuals[object] == nil then
+            OriginalVisuals[object] = object.Enabled
+        end
+        object.Enabled = false
+    end
+end))
+
+--==================================================
+-- Movement controls
+--==================================================
+
+local function applyMovement()
+    local _, humanoid = getCharacter()
+    if not humanoid then
+        return
+    end
+
+    humanoid.WalkSpeed = State.Speed and Config.WalkSpeed or 16
+
+    if humanoid.UseJumpPower then
+        humanoid.JumpPower =
+            State.HighJump and Config.JumpPower or 50
+    else
+        humanoid.JumpHeight =
+            State.HighJump and 12 or 7.2
+    end
+end
+
+local function stopFly()
+    disconnect(FlyConnection)
+    FlyConnection = nil
+
+    if FlyVelocity then
+        FlyVelocity:Destroy()
+        FlyVelocity = nil
+    end
+
+    if FlyOrientation then
+        FlyOrientation:Destroy()
+        FlyOrientation = nil
+    end
+
+    if FlyAttachment then
+        FlyAttachment:Destroy()
+        FlyAttachment = nil
+    end
+
+    if Humanoid then
+        Humanoid.AutoRotate = true
+        if Humanoid.Health > 0 then
+            Humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end
+    end
+end
+
+local function startFly()
+    local _, humanoid, root = getCharacter()
+    if not humanoid or not root then
+        return
+    end
+
+    stopFly()
+
+    FlyAttachment = Instance.new("Attachment")
+    FlyAttachment.Name = "AxiomFlyAttachment"
+    FlyAttachment.Parent = root
+
+    FlyVelocity = Instance.new("LinearVelocity")
+    FlyVelocity.Name = "AxiomFlyVelocity"
+    FlyVelocity.Attachment0 = FlyAttachment
+    FlyVelocity.RelativeTo = Enum.ActuatorRelativeTo.World
+    FlyVelocity.VelocityConstraintMode =
+        Enum.VelocityConstraintMode.Vector
+    FlyVelocity.VectorVelocity = Vector3.zero
+    FlyVelocity.MaxForce = 100000
+    FlyVelocity.Parent = root
+
+    FlyOrientation = Instance.new("AlignOrientation")
+    FlyOrientation.Name = "AxiomFlyOrientation"
+    FlyOrientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
+    FlyOrientation.Attachment0 = FlyAttachment
+    FlyOrientation.MaxTorque = 100000
+    FlyOrientation.Responsiveness = 15
+    FlyOrientation.Parent = root
+
+    humanoid.AutoRotate = false
+    humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+
+    FlyConnection = RunService.RenderStepped:Connect(function()
+        if not State.Fly then
+            stopFly()
+            return
+        end
+
+        if not root.Parent or humanoid.Health <= 0 then
+            stopFly()
+            return
+        end
+
+        local camera = Workspace.CurrentCamera
+        if not camera then
+            return
+        end
+
+        local forward = camera.CFrame.LookVector
+        local right = camera.CFrame.RightVector
+
+        local direction = Vector3.zero
+
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+            direction += forward
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+            direction -= forward
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+            direction += right
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+            direction -= right
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+            direction += Vector3.yAxis
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+            direction -= Vector3.yAxis
+        end
+
+        if direction.Magnitude > 0 then
+            direction = direction.Unit
+        end
+
+        FlyVelocity.VectorVelocity = Vector3.new(
+            direction.X * Config.FlySpeed,
+            direction.Y * Config.FlyVerticalSpeed,
+            direction.Z * Config.FlySpeed
+        )
+
+        local flatLook = Vector3.new(forward.X, 0, forward.Z)
+        if flatLook.Magnitude > 0.001 then
+            FlyOrientation.CFrame = CFrame.lookAt(
+                Vector3.zero,
+                flatLook.Unit
+            )
         end
     end)
 end
 
--- Thân panel
-local body = Instance.new("Frame")
-body.Name = "Body"
-body.Size = UDim2.new(1, 0, 1, -BAR_H)
-body.Position = UDim2.fromOffset(0, BAR_H)
-body.BackgroundTransparency = 1
-body.Parent = main
-
-local function makeColumn(xScale, xOffset, headerText)
-    local col = Instance.new("Frame")
-    col.Size = UDim2.new(0.5, -15, 1, -20)
-    col.Position = UDim2.new(xScale, xOffset, 0, 10)
-    col.BackgroundTransparency = 1
-    col.Parent = body
-
-    local header = Instance.new("TextLabel")
-    header.Size = UDim2.new(1, 0, 0, 16)
-    header.BackgroundTransparency = 1
-    header.Text = headerText
-    header.TextColor3 = C.sub
-    header.Font = Enum.Font.GothamBold
-    header.TextSize = 11
-    header.TextXAlignment = Enum.TextXAlignment.Left
-    header.Parent = col
-
-    local scroll = Instance.new("ScrollingFrame")
-    scroll.Size = UDim2.new(1, 0, 1, -20)
-    scroll.Position = UDim2.fromOffset(0, 20)
-    scroll.BackgroundTransparency = 1
-    scroll.BorderSizePixel = 0
-    scroll.ScrollBarThickness = 5
-    scroll.ScrollBarImageColor3 = C.on
-    scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-    scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    scroll.ScrollingDirection = Enum.ScrollingDirection.Y
-    scroll.Parent = col
-
-    local layout = Instance.new("UIListLayout")
-    layout.Padding = UDim.new(0, 6)
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Parent = scroll
-
-    local pad = Instance.new("UIPadding")
-    pad.PaddingRight = UDim.new(0, 8)
-    pad.Parent = scroll
-
-    return scroll
-end
-
-local leftCol  = makeColumn(0, 10, "CHỨC NĂNG")
-local rightCol = makeColumn(0.5, 5, "TỌA ĐỘ / DI CHUYỂN")
-
--- Nút toggle chức năng
-local function makeToggle(parent, order, key, label, accentColor)
-    local b = Instance.new("TextButton")
-    b.LayoutOrder = order
-    b.Size = UDim2.new(1, 0, 0, 32)
-    b.Text = "   " .. label
-    b.TextXAlignment = Enum.TextXAlignment.Left
-    style(b, C.off)
-    b.Parent = parent
-
-    local dot = Instance.new("Frame")
-    dot.Size = UDim2.fromOffset(8, 8)
-    dot.Position = UDim2.new(1, -18, 0.5, -4)
-    dot.BackgroundColor3 = Color3.fromRGB(110, 110, 125)
-    dot.Parent = b
-    round(dot, 4)
-
-    b.MouseButton1Click:Connect(function()
-        state[key] = not state[key]
-        b.BackgroundColor3 = state[key] and (accentColor or C.on) or C.off
-        dot.BackgroundColor3 = state[key] and Color3.new(1, 1, 1) or Color3.fromRGB(110, 110, 125)
-        if handlers[key] then handlers[key](state[key]) end
-    end)
-    return b
-end
-
-makeToggle(leftCol, 1, "Fly", "✈️ Fly")
-makeToggle(leftCol, 2, "FlyNoclip", "🚪 Fly xuyên tường")
-makeToggle(leftCol, 3, "Speed", "🏃 Tốc độ")
-makeToggle(leftCol, 4, "HighJump", "🦘 Nhảy cao")
-makeToggle(leftCol, 5, "InfJump", "♾️ Nhảy vô tận")
-makeToggle(leftCol, 6, "ESP", "👁️ ESP viền")
-makeToggle(leftCol, 7, "ESPName", "🏷️ ESP tên")
-makeToggle(leftCol, 8, "ESPNPC", "🤖 ESP NPC")
-makeToggle(leftCol, 9, "ESPPlayer", "👤 ESP Người chơi", C.on)
-makeToggle(leftCol, 10, "Aimbot", "🎯 Aimbot")
-makeToggle(leftCol, 11, "FPS", "⚡ Fix lag")
-makeToggle(leftCol, 12, "FPSv2", "✨ Fix lag v2 (trắng)", C.on2)
-
--- Cột phải (TextBox & Action Buttons)
-local function makeBox(order, placeholder, getter, minV, maxV, onChange)
-    local box = Instance.new("TextBox")
-    box.LayoutOrder = order
-    box.Size = UDim2.new(1, 0, 0, 32)
-    box.PlaceholderText = placeholder
-    box.Text = tostring(getter())
-    box.ClearTextOnFocus = false
-    style(box, C.input)
-    box.TextSize = 13
-    box.Parent = rightCol
-    box.FocusLost:Connect(function()
-        local v = tonumber(box.Text)
-        if v then onChange(math.clamp(v, minV, maxV)) end
-        box.Text = tostring(getter())
-    end)
-    return box
-end
-
-makeBox(1, "Tốc độ bay", function() return travelSpeed end, 5, 300, function(v) travelSpeed = v end)
-makeBox(2, "Độ dài bước", function() return stepDistance end, 2, 50, function(v) stepDistance = v end)
-
-local function makeAction(order, label, color, callback)
-    local b = Instance.new("TextButton")
-    b.LayoutOrder = order
-    b.Size = UDim2.new(1, 0, 0, 32)
-    b.Text = label
-    style(b, color)
-    b.TextSize = 13
-    b.Parent = rightCol
-    b.MouseButton1Click:Connect(function() callback(b) end)
-    return b
-end
-
-makeAction(3, "💾 Lưu vị trí hiện tại", C.action, function(b)
-    if savePosition() then
-        b.Text = "✅ Đã lưu!"
-        task.delay(1.2, function()
-            if b.Parent then b.Text = "💾 Lưu vị trí hiện tại" end
-        end)
+track(UserInputService.JumpRequest:Connect(function()
+    if not State.InfiniteJump then
+        return
     end
-end)
-makeAction(4, "⚡ TP thẳng đến vị trí lưu", C.action, teleportToSaved)
-makeAction(5, "🚀 Bay đến vị trí lưu", C.action, flyToSaved)
-makeAction(6, "📏 TP từng đoạn đến vị trí", C.action, stepTeleportToSaved)
-makeAction(7, "🛑 DỪNG di chuyển", C.danger, stopTravel)
 
--- Nút AIM cho mobile
-local aimBtn = Instance.new("TextButton")
-aimBtn.Size = UDim2.fromOffset(120, 60)
-aimBtn.Position = UDim2.new(1, -140, 1, -80)
-aimBtn.Text = "🎯 AIM\n(giữ)"
-aimBtn.TextColor3 = C.text
-aimBtn.Font = Enum.Font.GothamBold
-aimBtn.TextSize = 14
-aimBtn.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
-aimBtn.BackgroundTransparency = 0.3
-aimBtn.Visible = UIS.TouchEnabled
-aimBtn.Parent = gui
-round(aimBtn, 30)
+    local _, humanoid = getCharacter()
+    if humanoid and humanoid.Health > 0 then
+        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+    end
+end))
 
-aimBtn.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.Touch
-    or input.UserInputType == Enum.UserInputType.MouseButton1 then
-        aimbotActive = true
-        aimBtn.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
-    end
-end)
-aimBtn.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.Touch
-    or input.UserInputType == Enum.UserInputType.MouseButton1 then
-        aimbotActive = false
-        aimBtn.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
-    end
+--==================================================
+-- Build the menu
+--==================================================
+
+addSection("Performance")
+
+addToggle("FPS Boost", "Reduce local visual effects", function(enabled)
+    State.Performance = enabled
+    applyPerformance(enabled)
 end)
 
--- Nút bay xuống cho mobile
-local downBtn = Instance.new("TextButton")
-downBtn.Size = UDim2.fromOffset(60, 60)
-downBtn.Position = UDim2.new(1, -220, 1, -80)
-downBtn.Text = "▼"
-downBtn.TextColor3 = C.text
-downBtn.Font = Enum.Font.GothamBold
-downBtn.TextSize = 24
-downBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 120)
-downBtn.BackgroundTransparency = 0.3
-downBtn.Visible = UIS.TouchEnabled
-downBtn.Parent = gui
-round(downBtn, 30)
+addSection("Player debug")
 
-downBtn.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.Touch
-    or input.UserInputType == Enum.UserInputType.MouseButton1 then
-        _G.FlyDown = true
-    end
-end)
-downBtn.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.Touch
-    or input.UserInputType == Enum.UserInputType.MouseButton1 then
-        _G.FlyDown = false
-    end
+addToggle("Player ESP", "Occluded outlines for Studio tests", function(enabled)
+    State.ESP = enabled
+    refreshHighlights()
 end)
 
--- Sửa logic thu gọn / mở rộng menu hoàn chỉnh
-local collapsed = false
-mini.MouseButton1Click:Connect(function()
-    collapsed = not collapsed
-    if collapsed then
-        body.Visible = false
-        main.Size = UDim2.fromOffset(FULL_W, BAR_H)
-        mini.Text = "+"
+addSection("Movement")
+
+addToggle("Speed", "Increase walking speed", function(enabled)
+    State.Speed = enabled
+    applyMovement()
+end)
+
+addToggle("High Jump", "Increase jump height", function(enabled)
+    State.HighJump = enabled
+    applyMovement()
+end)
+
+addToggle("Infinite Jump", "Jump repeatedly while testing", function(enabled)
+    State.InfiniteJump = enabled
+end)
+
+addToggle("Fly", "WASD + Space / Ctrl on keyboard", function(enabled)
+    State.Fly = enabled
+    if enabled then
+        startFly()
     else
-        body.Visible = true
-        main.Size = UDim2.fromOffset(FULL_W, FULL_H)
-        mini.Text = "–"
+        stopFly()
     end
 end)
+
+addSection("Controls")
+
+local resetButton = create("TextButton", {
+    Size = UDim2.new(1, -2, 0, 38),
+    BackgroundColor3 = Color3.fromRGB(72, 40, 51),
+    BorderSizePixel = 0,
+    Text = "RESET ALL FEATURES",
+    TextColor3 = COLORS.Text,
+    TextSize = 11,
+    Font = Enum.Font.GothamBold,
+    AutoButtonColor = true,
+}, Content)
+corner(resetButton, 9)
+
+track(resetButton.Activated:Connect(function()
+    State.Fly = false
+    stopFly()
+
+    State.Speed = false
+    State.HighJump = false
+    State.InfiniteJump = false
+
+    State.ESP = false
+    refreshHighlights()
+
+    State.Performance = false
+    applyPerformance(false)
+
+    applyMovement()
+
+    -- Reset visual toggle states.
+    for _, child in ipairs(Content:GetChildren()) do
+        if child:IsA("Frame") then
+            local button = child:FindFirstChildOfClass("TextButton")
+            if button then
+                button.Text = "OFF"
+                button.BackgroundColor3 = COLORS.Background
+                button.TextColor3 = COLORS.Muted
+            end
+        end
+    end
+end))
+local function onCharacterAdded(character)
+    Character = character
+    Humanoid = character:WaitForChild("Humanoid", 10)
+    RootPart = character:WaitForChild("HumanoidRootPart", 10)
+
+    if not Humanoid then
+        return
+    end
+
+    applyMovement()
+
+    if State.Fly then
+        task.defer(startFly)
+    end
+end
+
+if LocalPlayer.Character then
+    task.spawn(onCharacterAdded, LocalPlayer.Character)
+end
+
+track(LocalPlayer.CharacterAdded:Connect(onCharacterAdded))
+
+track(LocalPlayer.CharacterRemoving:Connect(function()
+    stopFly()
+end))
+track(GUI.Destroying:Connect(function()
+    stopFly()
+    applyPerformance(false)
+
+    for player in pairs(Highlights) do
+        removeHighlight(player)
+    end
+
+    for _, connection in ipairs(CharacterConnections) do
+        disconnect(connection)
+    end
+
+    for _, connection in ipairs(Connections) do
+        disconnect(connection)
+    end
+end))
+
+print("[Axiom] Panel loaded successfully, boss man.")
