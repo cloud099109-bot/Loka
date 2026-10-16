@@ -5,11 +5,7 @@ local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
 local Camera = workspace.CurrentCamera
 
--- Thay bằng UserId của các admin
-local ADMIN_IDS = { [12345678] = true }
-
 local player = Players.LocalPlayer
-if not ADMIN_IDS[player.UserId] then return end
 
 local SPEED_VALUE, JUMP_VALUE, FLY_SPEED = 50, 120, 60
 local DEFAULT_SPEED, DEFAULT_JUMP = 16, 50
@@ -21,9 +17,7 @@ local stepDistance = 8
 local travelToken = 0
 local travelBusy = false
 
-----------------------------------------------------------------
--- LOGIC
-----------------------------------------------------------------
+-- ===== HELPERS =====
 local function getChar()
 	local c = player.Character
 	if not c then return end
@@ -116,29 +110,35 @@ local function applyStats()
 	hum.JumpPower = state.HighJump and JUMP_VALUE or DEFAULT_JUMP
 end
 
--- FLY
+-- ===== FLY =====
 local flyConn, bv
 local function setFly(on)
-	if flyConn then flyConn:Disconnect() flyConn = nil end
-	if bv then bv:Destroy() bv = nil end
+	if flyConn then flyConn:Disconnect(); flyConn = nil end
+	if bv then bv:Destroy(); bv = nil end
 	local hum, root = getChar()
 	if hum then hum.PlatformStand = false end
 	if not on or not root then return end
+
 	bv = Instance.new("BodyVelocity")
 	bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
 	bv.Velocity = Vector3.zero
 	bv.Parent = root
+
 	flyConn = RunService.Heartbeat:Connect(function()
 		local h = getChar()
-		if not h or not bv then return end
+		if not h or not bv or not bv.Parent then return end
 		local v = h.MoveDirection * FLY_SPEED
-		if UIS:IsKeyDown(Enum.KeyCode.Space) or h.Jump then v += Vector3.new(0, FLY_SPEED, 0) end
-		if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then v -= Vector3.new(0, FLY_SPEED, 0) end
+		if UIS:IsKeyDown(Enum.KeyCode.Space) then
+			v = v + Vector3.new(0, FLY_SPEED, 0)
+		end
+		if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then
+			v = v - Vector3.new(0, FLY_SPEED, 0)
+		end
 		bv.Velocity = v
 	end)
 end
 
--- NHẢY VÔ TẬN
+-- ===== INF JUMP =====
 UIS.JumpRequest:Connect(function()
 	if state.InfJump then
 		local hum = getChar()
@@ -146,17 +146,18 @@ UIS.JumpRequest:Connect(function()
 	end
 end)
 
--- AIMBOT (giữ chuột phải)
+-- ===== AIMBOT =====
 local aimbotConn
 local function getClosestPlayer()
 	local closestPlayer = nil
 	local shortestDistance = math.huge
 	local mouseLocation = UIS:GetMouseLocation()
 	for _, p in ipairs(Players:GetPlayers()) do
-		if p ~= player and p.Character and p.Character:FindFirstChild("Head") and p.Character:FindFirstChildOfClass("Humanoid") then
+		if p ~= player and p.Character then
+			local head = p.Character:FindFirstChild("Head")
 			local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
-			if humanoid.Health > 0 then
-				local screenPoint, onScreen = Camera:WorldToViewportPoint(p.Character.Head.Position)
+			if head and humanoid and humanoid.Health > 0 then
+				local screenPoint, onScreen = Camera:WorldToViewportPoint(head.Position)
 				if onScreen then
 					local distance = (Vector2.new(screenPoint.X, screenPoint.Y) - mouseLocation).Magnitude
 					if distance < shortestDistance then
@@ -171,19 +172,22 @@ local function getClosestPlayer()
 end
 
 local function setAimbot(on)
-	if aimbotConn then aimbotConn:Disconnect() aimbotConn = nil end
+	if aimbotConn then aimbotConn:Disconnect(); aimbotConn = nil end
 	if not on then return end
 	aimbotConn = RunService.RenderStepped:Connect(function()
 		if state.Aimbot and UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
 			local target = getClosestPlayer()
-			if target and target.Character and target.Character:FindFirstChild("Head") then
-				Camera.CFrame = CFrame.new(Camera.CFrame.Position, target.Character.Head.Position)
+			if target and target.Character then
+				local head = target.Character:FindFirstChild("Head")
+				if head then
+					Camera.CFrame = CFrame.new(Camera.CFrame.Position, head.Position)
+				end
 			end
 		end
 	end)
 end
 
--- ESP
+-- ===== ESP =====
 local highlights = {}
 local function addESP(p)
 	if p == player or not p.Character then return end
@@ -213,21 +217,29 @@ end
 for _, p in ipairs(Players:GetPlayers()) do watch(p) end
 Players.PlayerAdded:Connect(watch)
 
--- FIX LAG
+-- ===== FIX LAG =====
 local disabled = {}
 local oldShadows = Lighting.GlobalShadows
 local function setFPS(on)
 	if on then
 		oldShadows = Lighting.GlobalShadows
 		Lighting.GlobalShadows = false
-		pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+		pcall(function()
+			local UserSettings = UserSettings and UserSettings() or nil
+			if UserSettings then
+				local gameSettings = UserSettings:GetService("UserGameSettings")
+				if gameSettings then
+					gameSettings.SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel1
+				end
+			end
+		end)
 		for _, d in ipairs(workspace:GetDescendants()) do
 			if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
-				if d.Enabled then d.Enabled = false table.insert(disabled, d) end
+				if d.Enabled then d.Enabled = false; table.insert(disabled, d) end
 			end
 		end
 		for _, e in ipairs(Lighting:GetChildren()) do
-			if e:IsA("PostEffect") and e.Enabled then e.Enabled = false table.insert(disabled, e) end
+			if e:IsA("PostEffect") and e.Enabled then e.Enabled = false; table.insert(disabled, e) end
 		end
 	else
 		Lighting.GlobalShadows = oldShadows
@@ -247,9 +259,7 @@ player.CharacterAdded:Connect(function()
 	if state.Fly then setFly(true) end
 end)
 
-----------------------------------------------------------------
--- GIAO DIỆN (bố cục ngang: 2 cột, không cần cuộn)
-----------------------------------------------------------------
+-- ===== GIAO DIỆN =====
 local C = {
 	bg      = Color3.fromRGB(20, 20, 26),
 	bar     = Color3.fromRGB(30, 30, 40),
@@ -300,7 +310,6 @@ stroke.Color = Color3.fromRGB(70, 70, 90)
 stroke.Thickness = 1
 stroke.Parent = main
 
--- tự thu nhỏ nếu màn hình nhỏ
 local uiScale = Instance.new("UIScale")
 uiScale.Parent = main
 local function updateScale()
@@ -310,7 +319,7 @@ end
 updateScale()
 Camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateScale)
 
--- thanh tiêu đề (kéo để di chuyển)
+-- thanh tiêu đề
 local bar = Instance.new("Frame")
 bar.Size = UDim2.new(1, 0, 0, BAR_H)
 bar.BackgroundColor3 = C.bar
@@ -336,7 +345,7 @@ style(mini, C.off)
 mini.TextSize = 16
 mini.Parent = bar
 
--- kéo thả (hỗ trợ cả chuột và cảm ứng)
+-- kéo thả
 do
 	local dragging, dragStart, startPos
 	bar.InputBegan:Connect(function(input)
@@ -413,7 +422,6 @@ for i, item in ipairs(toggles) do
 	style(b, C.off)
 	b.Parent = leftGrid
 
-	-- chấm trạng thái
 	local dot = Instance.new("Frame")
 	dot.Size = UDim2.fromOffset(8, 8)
 	dot.Position = UDim2.new(1, -16, 0.5, -4)
