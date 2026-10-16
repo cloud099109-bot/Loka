@@ -105,11 +105,8 @@ local function applyStats()
     hum.JumpPower = state.HighJump and JUMP_VALUE or DEFAULT_JUMP
 end
 
--- ===== FLY (CFrame-based, bay cao + xuyên tường) =====
+-- ===== FLY =====
 local flyConn
-local flyVel = Vector3.zero
-local lastFlyUpdate = 0
-
 local function setFly(on)
     if flyConn then flyConn:Disconnect(); flyConn = nil end
     local hum, root = getChar()
@@ -117,9 +114,7 @@ local function setFly(on)
     if not on or not root then return end
 
     hum.PlatformStand = true
-    flyVel = Vector3.zero
 
-    -- Dùng RenderStepped để cập nhật CFrame trực tiếp (bay cao + xuyên tường)
     flyConn = RunService.RenderStepped:Connect(function(dt)
         local h, r = getChar()
         if not h or not r then return end
@@ -127,12 +122,10 @@ local function setFly(on)
         local speed = FLY_SPEED
         local dir = h.MoveDirection
 
-        -- Bay lên/xuống bằng Space / LeftShift
         local vert = 0
         if UIS:IsKeyDown(Enum.KeyCode.Space) then vert = 1 end
         if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then vert = -1 end
 
-        -- Trên mobile: nút nhảy (Jump) = lên, không có nút xuống thì dùng nút "▼"
         if UIS.TouchEnabled then
             if h:GetState() == Enum.HumanoidStateType.Jumping then vert = 1 end
             if _G.FlyDown then vert = -1 end
@@ -141,7 +134,6 @@ local function setFly(on)
         local move = Vector3.new(dir.X, 0, dir.Z) * speed
         move = move + Vector3.new(0, vert * speed, 0)
 
-        -- Di chuyển bằng CFrame (bỏ qua physics, xuyên tường, bay cao)
         r.CFrame = r.CFrame + (move * dt)
         r.Velocity = Vector3.zero
         r.RotVelocity = Vector3.zero
@@ -156,9 +148,9 @@ UIS.JumpRequest:Connect(function()
     end
 end)
 
--- ===== AIMBOT (hỗ trợ chuột + cảm ứng) =====
+-- ===== AIMBOT =====
 local aimbotConn = nil
-local aimbotActive = false -- cho mobile: giữ nút AIM
+local aimbotActive = false
 
 local function getClosestPlayer()
     local closest, shortest = nil, math.huge
@@ -306,7 +298,7 @@ local function setFPS(on)
     end
 end
 
--- ===== FIX LAG v2 (màn hình trắng) =====
+-- ===== FIX LAG v2 =====
 local hiddenGuis = {}
 local myGui
 
@@ -432,7 +424,7 @@ end
 updateScale()
 Camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateScale)
 
--- thanh tiêu đề (kéo thả)
+-- Thanh tiêu đề
 local bar = Instance.new("Frame")
 bar.Size = UDim2.new(1, 0, 0, BAR_H)
 bar.BackgroundColor3 = C.bar
@@ -456,9 +448,10 @@ mini.Position = UDim2.new(1, -40, 0.5, -12)
 mini.Text = "–"
 style(mini, C.off)
 mini.TextSize = 16
+mini.ZIndex = 5
 mini.Parent = bar
 
--- kéo thả
+-- Kéo thả bảng
 do
     local dragging, dragStart, startPos
     bar.InputBegan:Connect(function(input)
@@ -482,7 +475,7 @@ do
     end)
 end
 
--- thân panel
+-- Thân panel
 local body = Instance.new("Frame")
 body.Name = "Body"
 body.Size = UDim2.new(1, 0, 1, -BAR_H)
@@ -534,14 +527,13 @@ end
 local leftCol  = makeColumn(0, 10, "CHỨC NĂNG")
 local rightCol = makeColumn(0.5, 5, "TỌA ĐỘ / DI CHUYỂN")
 
--- nút toggle
+-- Nút toggle chức năng
 local function makeToggle(parent, order, key, label, accentColor)
     local b = Instance.new("TextButton")
     b.LayoutOrder = order
     b.Size = UDim2.new(1, 0, 0, 32)
-    b.Text = label
+    b.Text = "   " .. label
     b.TextXAlignment = Enum.TextXAlignment.Left
-    b.Padding = UDim.new(0, 10)
     style(b, C.off)
     b.Parent = parent
 
@@ -574,7 +566,7 @@ makeToggle(leftCol, 10, "Aimbot", "🎯 Aimbot")
 makeToggle(leftCol, 11, "FPS", "⚡ Fix lag")
 makeToggle(leftCol, 12, "FPSv2", "✨ Fix lag v2 (trắng)", C.on2)
 
--- cột phải
+-- Cột phải (TextBox & Action Buttons)
 local function makeBox(order, placeholder, getter, minV, maxV, onChange)
     local box = Instance.new("TextBox")
     box.LayoutOrder = order
@@ -677,7 +669,7 @@ downBtn.InputEnded:Connect(function(input)
     end
 end)
 
--- thu gọn / mở rộng (đã fix)
+-- Sửa logic thu gọn / mở rộng menu hoàn chỉnh
 local collapsed = false
 mini.MouseButton1Click:Connect(function()
     collapsed = not collapsed
