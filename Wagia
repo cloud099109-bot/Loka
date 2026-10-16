@@ -1,393 +1,636 @@
--- LocalScript: đặt trong StarterPlayer > StarterPlayerScripts
+-- LocalScript: StarterPlayer > StarterPlayerScripts
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
 local Camera = workspace.CurrentCamera
 
--- Thay bằng UserId của các admin
-local ADMIN_IDS = { [12345678] = true }
-
 local player = Players.LocalPlayer
-if not ADMIN_IDS[player.UserId] then return end
 
 local SPEED_VALUE, JUMP_VALUE, FLY_SPEED = 50, 120, 60
 local DEFAULT_SPEED, DEFAULT_JUMP = 16, 50
 
-local state = { Fly = false, Speed = false, HighJump = false, InfJump = false, ESP = false, FPS = false, Aimbot = false }
+local state = {
+    Fly = false, FlyNoclip = false, Speed = false, HighJump = false,
+    InfJump = false, ESP = false, ESPName = false, ESPNPC = false, ESPPlayer = true,
+    FPS = false, FPSv2 = false, Aimbot = false,
+}
 local savedPosition = nil
 local travelSpeed = 60
 local stepDistance = 8
 local travelToken = 0
 local travelBusy = false
 
+-- ===== HELPERS =====
 local function getChar()
-	local c = player.Character
-	if not c then return end
-	return c:FindFirstChildOfClass("Humanoid"), c:FindFirstChild("HumanoidRootPart")
+    local c = player.Character
+    if not c then return end
+    return c:FindFirstChildOfClass("Humanoid"), c:FindFirstChild("HumanoidRootPart")
 end
 
 local function stopTravel()
-	travelToken += 1
-	travelBusy = false
-	local hum = getChar()
-	if hum then hum.PlatformStand = false end
+    travelToken += 1
+    travelBusy = false
+    local hum = getChar()
+    if hum then hum.PlatformStand = false end
 end
 
 local function savePosition()
-	local _, root = getChar()
-	if root then
-		savedPosition = root.CFrame
-		return true
-	end
-	return false
+    local _, root = getChar()
+    if root then savedPosition = root.CFrame; return true end
+    return false
 end
 
 local function teleportToSaved()
-	local _, root = getChar()
-	if root and savedPosition then
-		stopTravel()
-		root.CFrame = savedPosition
-		return true
-	end
-	return false
+    local _, root = getChar()
+    if root and savedPosition then
+        stopTravel()
+        root.CFrame = savedPosition
+        return true
+    end
+    return false
 end
 
--- Di chuyển mượt theo đường thẳng tới tọa độ đã lưu.
 local function flyToSaved()
-	local hum, root = getChar()
-	if not hum or not root or not savedPosition or travelBusy then return end
-	travelToken += 1
-	local token = travelToken
-	travelBusy = true
-	hum.PlatformStand = true
-	task.spawn(function()
-		while token == travelToken do
-			local currentHum, currentRoot = getChar()
-			if not currentHum or not currentRoot then break end
-			local offset = savedPosition.Position - currentRoot.Position
-			local distance = offset.Magnitude
-			if distance <= 2 then
-				currentRoot.CFrame = savedPosition
-				break
-			end
-			local dt = RunService.Heartbeat:Wait()
-			if token ~= travelToken then break end
-			local step = math.min(distance, math.max(1, travelSpeed) * math.min(dt, 0.05))
-			local nextPosition = currentRoot.Position + offset.Unit * step
-			currentRoot.CFrame = CFrame.new(nextPosition, nextPosition + currentRoot.CFrame.LookVector)
-		end
-		local currentHum = getChar()
-		if currentHum then currentHum.PlatformStand = false end
-		if token == travelToken then travelBusy = false end
-	end)
+    local hum, root = getChar()
+    if not hum or not root or not savedPosition or travelBusy then return end
+    travelToken += 1
+    local token = travelToken
+    travelBusy = true
+    hum.PlatformStand = true
+    task.spawn(function()
+        while token == travelToken do
+            local _, currentRoot = getChar()
+            if not currentRoot then break end
+            local offset = savedPosition.Position - currentRoot.Position
+            local distance = offset.Magnitude
+            if distance <= 2 then currentRoot.CFrame = savedPosition; break end
+            local dt = RunService.Heartbeat:Wait()
+            if token ~= travelToken then break end
+            local step = math.min(distance, math.max(1, travelSpeed) * math.min(dt, 0.05))
+            local nextPos = currentRoot.Position + offset.Unit * step
+            currentRoot.CFrame = CFrame.new(nextPos, nextPos + currentRoot.CFrame.LookVector)
+        end
+        local currentHum = getChar()
+        if currentHum then currentHum.PlatformStand = false end
+        if token == travelToken then travelBusy = false end
+    end)
 end
 
--- Dịch chuyển theo các đoạn ngắn; chỉ dùng trong game bạn sở hữu/được phép quản trị.
 local function stepTeleportToSaved()
-	local _, root = getChar()
-	if not root or not savedPosition or travelBusy then return end
-	travelToken += 1
-	local token = travelToken
-	travelBusy = true
-	task.spawn(function()
-		while token == travelToken do
-			local _, currentRoot = getChar()
-			if not currentRoot then break end
-			local offset = savedPosition.Position - currentRoot.Position
-			local distance = offset.Magnitude
-			if distance <= stepDistance then
-				currentRoot.CFrame = savedPosition
-				break
-			end
-			currentRoot.CFrame = currentRoot.CFrame + offset.Unit * stepDistance
-			task.wait(0.08)
-		end
-		if token == travelToken then travelBusy = false end
-	end)
+    local _, root = getChar()
+    if not root or not savedPosition or travelBusy then return end
+    travelToken += 1
+    local token = travelToken
+    travelBusy = true
+    task.spawn(function()
+        while token == travelToken do
+            local _, currentRoot = getChar()
+            if not currentRoot then break end
+            local offset = savedPosition.Position - currentRoot.Position
+            local distance = offset.Magnitude
+            if distance <= stepDistance then currentRoot.CFrame = savedPosition; break end
+            currentRoot.CFrame = currentRoot.CFrame + offset.Unit * stepDistance
+            task.wait(0.08)
+        end
+        if token == travelToken then travelBusy = false end
+    end)
 end
 
 local function applyStats()
-	local hum = getChar()
-	if not hum then return end
-	hum.WalkSpeed = state.Speed and SPEED_VALUE or DEFAULT_SPEED
-	hum.UseJumpPower = true
-	hum.JumpPower = state.HighJump and JUMP_VALUE or DEFAULT_JUMP
+    local hum = getChar()
+    if not hum then return end
+    hum.WalkSpeed = state.Speed and SPEED_VALUE or DEFAULT_SPEED
+    hum.UseJumpPower = true
+    hum.JumpPower = state.HighJump and JUMP_VALUE or DEFAULT_JUMP
 end
 
--- FLY
-local flyConn, bv
+-- ===== FLY (đã fix + xuyên tường) =====
+local flyConn, flyBV, flyNoclipConn
 local function setFly(on)
-	if flyConn then flyConn:Disconnect() flyConn = nil end
-	if bv then bv:Destroy() bv = nil end
-	local hum, root = getChar()
-	if hum then hum.PlatformStand = false end
-	if not on or not root then return end
-	bv = Instance.new("BodyVelocity")
-	bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-	bv.Velocity = Vector3.zero
-	bv.Parent = root
-	flyConn = RunService.Heartbeat:Connect(function()
-		local h = getChar()
-		if not h or not bv then return end
-		local v = h.MoveDirection * FLY_SPEED
-		if UIS:IsKeyDown(Enum.KeyCode.Space) or h.Jump then v += Vector3.new(0, FLY_SPEED, 0) end
-		if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then v -= Vector3.new(0, FLY_SPEED, 0) end
-		bv.Velocity = v
-	end)
+    if flyConn then flyConn:Disconnect(); flyConn = nil end
+    if flyBV then flyBV:Destroy(); flyBV = nil end
+    if flyNoclipConn then flyNoclipConn:Disconnect(); flyNoclipConn = nil end
+    local hum, root = getChar()
+    if hum then hum.PlatformStand = false end
+    if not on or not root then return end
+
+    hum.PlatformStand = true
+    flyBV = Instance.new("BodyVelocity")
+    flyBV.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+    flyBV.Velocity = Vector3.zero
+    flyBV.Parent = root
+
+    flyConn = RunService.Heartbeat:Connect(function()
+        local h, r = getChar()
+        if not h or not flyBV or not flyBV.Parent then return end
+        local v = h.MoveDirection * FLY_SPEED
+        if UIS:IsKeyDown(Enum.KeyCode.Space) then
+            v = v + Vector3.new(0, FLY_SPEED, 0)
+        end
+        if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then
+            v = v - Vector3.new(0, FLY_SPEED, 0)
+        end
+        flyBV.Velocity = v
+        -- Fly xuyên tường: ép CFrame đi xuyên qua mọi vật thể
+        if state.FlyNoclip and r then
+            local move = (v * RunService.Heartbeat:Wait()) -- không dùng ở đây
+            -- thay vào đó dùng RenderStepped bên dưới
+        end
+    end)
+
+    -- Xuyên tường thực sự: cập nhật CFrame liên tục bỏ qua collision
+    flyNoclipConn = RunService.RenderStepped:Connect(function(dt)
+        if not state.FlyNoclip then return end
+        local h, r = getChar()
+        if not h or not r then return end
+        local move = h.MoveDirection * FLY_SPEED * dt
+        if UIS:IsKeyDown(Enum.KeyCode.Space) then move += Vector3.new(0, FLY_SPEED * dt, 0) end
+        if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then move -= Vector3.new(0, FLY_SPEED * dt, 0) end
+        r.CFrame = r.CFrame + move
+    end)
 end
 
--- NHẢY VÔ TẬN
+-- ===== INF JUMP =====
 UIS.JumpRequest:Connect(function()
-	if state.InfJump then
-		local hum = getChar()
-		if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
-	end
+    if state.InfJump then
+        local hum = getChar()
+        if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+    end
 end)
 
--- AIMBOT (Giữ chuột phải để ngắm mục tiêu gần tâm màn hình nhất)[span_1](start_span)[span_1](end_span)
+-- ===== AIMBOT =====
 local aimbotConn
 local function getClosestPlayer()
-	local closestPlayer = nil
-	local shortestDistance = math.huge
-	local mouseLocation = UIS:GetMouseLocation()
-
-	for _, p in ipairs(Players:GetPlayers()) do
-		if p ~= player and p.Character and p.Character:FindFirstChild("Head") and p.Character:FindFirstChildOfClass("Humanoid") then
-			local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
-			if humanoid.Health > 0 then
-				local head = p.Character.Head
-				local screenPoint, onScreen = Camera:WorldToViewportPoint(head.Position)
-				if onScreen then
-					local distance = (Vector2.new(screenPoint.X, screenPoint.Y) - mouseLocation).Magnitude
-					if distance < shortestDistance then
-						shortestDistance = distance
-						closestPlayer = p
-					end
-				end
-			end
-		end
-	end
-	return closestPlayer
+    local closestPlayer, shortest = nil, math.huge
+    local mouseLoc = UIS:GetMouseLocation()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and p.Character then
+            local head = p.Character:FindFirstChild("Head")
+            local hum = p.Character:FindFirstChildOfClass("Humanoid")
+            if head and hum and hum.Health > 0 then
+                local sp, onScreen = Camera:WorldToViewportPoint(head.Position)
+                if onScreen then
+                    local d = (Vector2.new(sp.X, sp.Y) - mouseLoc).Magnitude
+                    if d < shortest then shortest = d; closestPlayer = p end
+                end
+            end
+        end
+    end
+    return closestPlayer
 end
 
 local function setAimbot(on)
-	if aimbotConn then aimbotConn:Disconnect() aimbotConn = nil end
-	if not on then return end
-
-	aimbotConn = RunService.RenderStepped:Connect(function()
-		if state.Aimbot and UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
-			local target = getClosestPlayer()
-			if target and target.Character and target.Character:FindFirstChild("Head") then
-				local headPos = target.Character.Head.Position
-				Camera.CFrame = CFrame.new(Camera.CFrame.Position, headPos)
-			end
-		end
-	end)
+    if aimbotConn then aimbotConn:Disconnect(); aimbotConn = nil end
+    if not on then return end
+    aimbotConn = RunService.RenderStepped:Connect(function()
+        if state.Aimbot and UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+            local t = getClosestPlayer()
+            if t and t.Character then
+                local head = t.Character:FindFirstChild("Head")
+                if head then Camera.CFrame = CFrame.new(Camera.CFrame.Position, head.Position) end
+            end
+        end
+    end)
 end
 
--- ESP (viền Highlight)
+-- ===== ESP (viền + tên + lọc NPC/Người chơi) =====
 local highlights = {}
+local billboards = {}
+
+local function isNPC(model)
+    local hum = model:FindFirstChildOfClass("Humanoid")
+    if not hum then return false end
+    return Players:GetPlayerFromCharacter(model) == nil
+end
+
+local function clearOneESP(p)
+    if highlights[p] then highlights[p]:Destroy(); highlights[p] = nil end
+    if billboards[p] then billboards[p]:Destroy(); billboards[p] = nil end
+end
+
 local function addESP(p)
-	if p == player or not p.Character then return end
-	if highlights[p] then highlights[p]:Destroy() end
-	local h = Instance.new("Highlight")
-	h.FillTransparency = 1
-	h.OutlineColor = Color3.fromRGB(255, 60, 60)
-	h.OutlineTransparency = 0
-	h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-	h.Parent = p.Character
-	highlights[p] = h
+    if p == player or not p.Character then return end
+    local isPlayer = Players:GetPlayerFromCharacter(p.Character) ~= nil
+    local isNpc = not isPlayer
+    if isPlayer and not state.ESPPlayer then clearOneESP(p); return end
+    if isNpc and not state.ESPNPC then clearOneESP(p); return end
+
+    clearOneESP(p)
+
+    local h = Instance.new("Highlight")
+    h.FillTransparency = 1
+    h.OutlineColor = isPlayer and Color3.fromRGB(255, 60, 60) or Color3.fromRGB(255, 200, 60)
+    h.OutlineTransparency = 0
+    h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    h.Parent = p.Character
+    highlights[p] = h
+
+    if state.ESPName then
+        local head = p.Character:FindFirstChild("Head")
+        if head then
+            local bb = Instance.new("BillboardGui")
+            bb.Size = UDim2.fromOffset(140, 24)
+            bb.StudsOffset = Vector3.new(0, 2.5, 0)
+            bb.AlwaysOnTop = true
+            bb.Parent = head
+            local lbl = Instance.new("TextLabel")
+            lbl.Size = UDim2.fromScale(1, 1)
+            lbl.BackgroundTransparency = 1
+            lbl.Text = p.Name
+            lbl.TextColor3 = isPlayer and Color3.fromRGB(255, 80, 80) or Color3.fromRGB(255, 200, 60)
+            lbl.TextStrokeTransparency = 0
+            lbl.TextScaled = true
+            lbl.Font = Enum.Font.GothamBold
+            lbl.Parent = bb
+            billboards[p] = bb
+        end
+    end
 end
+
 local function clearESP()
-	for _, h in pairs(highlights) do h:Destroy() end
-	table.clear(highlights)
+    for p in pairs(highlights) do clearOneESP(p) end
+    for p in pairs(billboards) do clearOneESP(p) end
+    table.clear(highlights)
+    table.clear(billboards)
 end
+
 local function setESP(on)
-	clearESP()
-	if on then for _, p in ipairs(Players:GetPlayers()) do addESP(p) end end
+    clearESP()
+    if on then
+        for _, p in ipairs(Players:GetPlayers()) do addESP(p) end
+    end
 end
+
+local function refreshESP()
+    if state.ESP then setESP(true) end
+end
+
 local function watch(p)
-	p.CharacterAdded:Connect(function()
-		task.wait(0.5)
-		if state.ESP then addESP(p) end
-	end)
+    p.CharacterAdded:Connect(function()
+        task.wait(0.5)
+        if state.ESP then addESP(p) end
+    end)
+    p.CharacterRemoving:Connect(function() clearOneESP(p) end)
 end
 for _, p in ipairs(Players:GetPlayers()) do watch(p) end
 Players.PlayerAdded:Connect(watch)
+Players.PlayerRemoving:Connect(function(p) clearOneESP(p) end)
 
--- FIX LAG
+-- ===== FIX LAG (bản cũ) =====
 local disabled = {}
 local oldShadows = Lighting.GlobalShadows
 local function setFPS(on)
-	if on then
-		oldShadows = Lighting.GlobalShadows
-		Lighting.GlobalShadows = false
-		pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
-		for _, d in ipairs(workspace:GetDescendants()) do
-			if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
-				if d.Enabled then d.Enabled = false table.insert(disabled, d) end
-			end
-		end
-		for _, e in ipairs(Lighting:GetChildren()) do
-			if e:IsA("PostEffect") and e.Enabled then e.Enabled = false table.insert(disabled, e) end
-		end
-	else
-		Lighting.GlobalShadows = oldShadows
-		for _, d in ipairs(disabled) do if d.Parent then d.Enabled = true end end
-		table.clear(disabled)
-	end
+    if on then
+        oldShadows = Lighting.GlobalShadows
+        Lighting.GlobalShadows = false
+        pcall(function()
+            local US = UserSettings and UserSettings() or nil
+            if US then
+                local gs = US:GetService("UserGameSettings")
+                if gs then gs.SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel1 end
+            end
+        end)
+        for _, d in ipairs(workspace:GetDescendants()) do
+            if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+                if d.Enabled then d.Enabled = false; table.insert(disabled, d) end
+            end
+        end
+        for _, e in ipairs(Lighting:GetChildren()) do
+            if e:IsA("PostEffect") and e.Enabled then e.Enabled = false; table.insert(disabled, e) end
+        end
+    else
+        Lighting.GlobalShadows = oldShadows
+        for _, d in ipairs(disabled) do if d.Parent then d.Enabled = true end end
+        table.clear(disabled)
+    end
+end
+
+-- ===== FIX LAG V2 (màn hình trắng - chỉ chừa menu) =====
+local hiddenGuis = {}
+local myGui -- gán sau khi tạo GUI
+
+local function setFPSv2(on)
+    if on then
+        hiddenGuis = {}
+        local pg = player:FindFirstChild("PlayerGui")
+        if pg then
+            for _, g in ipairs(pg:GetChildren()) do
+                if g:IsA("ScreenGui") or g:IsA("BillboardGui") then
+                    if g ~= myGui and g.Enabled then
+                        g.Enabled = false
+                        table.insert(hiddenGuis, g)
+                    end
+                end
+            end
+        end
+        -- Tắt CoreGui (chat, leaderboard, backpack...)
+        pcall(function()
+            local StarterGui = game:GetService("StarterGui")
+            StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false)
+        end)
+        -- Tắt mọi hiệu ứng
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = 1e6
+        Lighting.Brightness = 1
+        for _, e in ipairs(Lighting:GetChildren()) do
+            if e:IsA("PostEffect") then e.Enabled = false end
+        end
+        -- Màn hình trắng hoàn toàn
+        pcall(function()
+            Lighting.Ambient = Color3.fromRGB(255, 255, 255)
+            Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+            Lighting.EnvironmentDiffuseScale = 1
+            Lighting.EnvironmentSpecularScale = 1
+            Lighting.ClockTime = 12
+        end)
+    else
+        for _, g in ipairs(hiddenGuis) do
+            if g and g.Parent then g.Enabled = true end
+        end
+        table.clear(hiddenGuis)
+        pcall(function()
+            local StarterGui = game:GetService("StarterGui")
+            StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, true)
+        end)
+        Lighting.Ambient = Color3.fromRGB(70, 70, 70)
+        Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128)
+    end
 end
 
 local handlers = {
-	Fly = setFly, Speed = applyStats, HighJump = applyStats,
-	InfJump = function() end, ESP = setESP, FPS = setFPS, Aimbot = setAimbot,
+    Fly = setFly, Speed = applyStats, HighJump = applyStats,
+    InfJump = function() end,
+    ESP = setESP, FPS = setFPS, FPSv2 = setFPSv2,
+    Aimbot = setAimbot,
+    ESPName = function() refreshESP() end,
+    ESPNPC = function() refreshESP() end,
+    ESPPlayer = function() refreshESP() end,
+    FlyNoclip = function() end,
 }
 
 player.CharacterAdded:Connect(function()
-	task.wait(0.5)
-	applyStats()
-	if state.Fly then setFly(true) end
+    task.wait(0.5)
+    applyStats()
+    if state.Fly then setFly(true) end
 end)
 
--- GIAO DIỆN
+-- ===== GIAO DIỆN (ngang 2 cột, kéo được, scroll được) =====
+local C = {
+    bg      = Color3.fromRGB(18, 18, 24),
+    bar     = Color3.fromRGB(28, 28, 38),
+    off     = Color3.fromRGB(48, 48, 60),
+    on      = Color3.fromRGB(46, 170, 92),
+    on2     = Color3.fromRGB(200, 140, 40),
+    action  = Color3.fromRGB(58, 90, 140),
+    danger  = Color3.fromRGB(190, 60, 60),
+    input   = Color3.fromRGB(38, 38, 48),
+    text    = Color3.fromRGB(240, 240, 245),
+    sub     = Color3.fromRGB(150, 150, 165),
+}
+
+local function round(obj, r)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, r)
+    c.Parent = obj
+    return c
+end
+
+local function style(obj, bg)
+    obj.BackgroundColor3 = bg
+    obj.TextColor3 = C.text
+    obj.Font = Enum.Font.GothamMedium
+    obj.TextSize = 13
+    obj.AutoButtonColor = true
+    round(obj, 8)
+end
+
 local gui = Instance.new("ScreenGui")
 gui.Name = "AdminPanel"
 gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
 gui.Parent = player:WaitForChild("PlayerGui")
+myGui = gui
 
-local frame = Instance.new("Frame")
-frame.Size = UDim2.fromOffset(230, 470)
-frame.Position = UDim2.fromOffset(20, 80)
-frame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
-frame.Active = true
-frame.Draggable = true
-frame.Parent = gui
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+local FULL_W, FULL_H, BAR_H = 620, 320, 34
+
+local main = Instance.new("Frame")
+main.Name = "Main"
+main.AnchorPoint = Vector2.new(0.5, 0.5)
+main.Position = UDim2.fromScale(0.5, 0.5)
+main.Size = UDim2.fromOffset(FULL_W, FULL_H)
+main.BackgroundColor3 = C.bg
+main.ClipsDescendants = true
+main.Active = true
+main.Parent = gui
+round(main, 12)
+
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(70, 70, 95)
+stroke.Thickness = 1
+stroke.Parent = main
+
+local uiScale = Instance.new("UIScale")
+uiScale.Parent = main
+local function updateScale()
+    local vp = Camera.ViewportSize
+    uiScale.Scale = math.clamp(math.min((vp.X - 20) / FULL_W, (vp.Y - 20) / FULL_H), 0.5, 1)
+end
+updateScale()
+Camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateScale)
+
+-- thanh tiêu đề (kéo thả)
+local bar = Instance.new("Frame")
+bar.Size = UDim2.new(1, 0, 0, BAR_H)
+bar.BackgroundColor3 = C.bar
+bar.BorderSizePixel = 0
+bar.Parent = main
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -40, 0, 32)
-title.Position = UDim2.fromOffset(10, 0)
+title.Size = UDim2.new(1, -90, 1, 0)
+title.Position = UDim2.fromOffset(14, 0)
 title.BackgroundTransparency = 1
-title.Text = "Admin Panel"
-title.TextColor3 = Color3.new(1, 1, 1)
+title.Text = "⚡ ADMIN PANEL"
+title.TextColor3 = C.text
 title.Font = Enum.Font.GothamBold
-title.TextSize = 16
+title.TextSize = 15
 title.TextXAlignment = Enum.TextXAlignment.Left
-title.Parent = frame
-
-local body = Instance.new("ScrollingFrame")
-body.Size = UDim2.new(1, 0, 1, -36)
-body.Position = UDim2.fromOffset(0, 36)
-body.BackgroundTransparency = 1
-body.Parent = frame
-local layout = Instance.new("UIListLayout", body)
-layout.Padding = UDim.new(0, 6)
-layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+title.Parent = bar
 
 local mini = Instance.new("TextButton")
-mini.Size = UDim2.fromOffset(28, 24)
-mini.Position = UDim2.new(1, -34, 0, 4)
+mini.Size = UDim2.fromOffset(30, 24)
+mini.Position = UDim2.new(1, -40, 0.5, -12)
 mini.Text = "–"
-mini.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
-mini.TextColor3 = Color3.new(1, 1, 1)
-mini.Parent = frame
+style(mini, C.off)
+mini.TextSize = 16
+mini.Parent = bar
+
+-- kéo thả bằng tay (Draggable đã bị Roblox bỏ)
+do
+    local dragging, dragStart, startPos
+    bar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = main.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end)
+    UIS.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch) then
+            local d = (input.Position - dragStart) / uiScale.Scale
+            main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
+                                      startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+end
+
+-- thân panel
+local body = Instance.new("Frame")
+body.Size = UDim2.new(1, 0, 1, -BAR_H)
+body.Position = UDim2.fromOffset(0, BAR_H)
+body.BackgroundTransparency = 1
+body.Parent = main
+
+local function makeColumn(xScale, xOffset, headerText)
+    local col = Instance.new("Frame")
+    col.Size = UDim2.new(0.5, -15, 1, -20)
+    col.Position = UDim2.new(xScale, xOffset, 0, 10)
+    col.BackgroundTransparency = 1
+    col.Parent = body
+
+    local header = Instance.new("TextLabel")
+    header.Size = UDim2.new(1, 0, 0, 16)
+    header.BackgroundTransparency = 1
+    header.Text = headerText
+    header.TextColor3 = C.sub
+    header.Font = Enum.Font.GothamBold
+    header.TextSize = 11
+    header.TextXAlignment = Enum.TextXAlignment.Left
+    header.Parent = col
+
+    -- ScrollingFrame cho phép kéo lên xuống
+    local scroll = Instance.new("ScrollingFrame")
+    scroll.Size = UDim2.new(1, 0, 1, -20)
+    scroll.Position = UDim2.fromOffset(0, 20)
+    scroll.BackgroundTransparency = 1
+    scroll.BorderSizePixel = 0
+    scroll.ScrollBarThickness = 4
+    scroll.ScrollBarImageColor3 = C.on
+    scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    scroll.Parent = col
+
+    local layout = Instance.new("UIListLayout")
+    layout.Padding = UDim.new(0, 6)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Parent = scroll
+
+    return scroll
+end
+
+local leftCol  = makeColumn(0, 10, "CHỨC NĂNG")
+local rightCol = makeColumn(0.5, 5, "TỌA ĐỘ / DI CHUYỂN")
+
+-- tạo nút toggle
+local function makeToggle(parent, order, key, label, accentColor)
+    local b = Instance.new("TextButton")
+    b.LayoutOrder = order
+    b.Size = UDim2.new(1, -8, 0, 32)
+    b.Text = label
+    style(b, C.off)
+    b.Parent = parent
+
+    local dot = Instance.new("Frame")
+    dot.Size = UDim2.fromOffset(8, 8)
+    dot.Position = UDim2.new(1, -16, 0.5, -4)
+    dot.BackgroundColor3 = Color3.fromRGB(110, 110, 125)
+    dot.Parent = b
+    round(dot, 4)
+
+    b.MouseButton1Click:Connect(function()
+        state[key] = not state[key]
+        b.BackgroundColor3 = state[key] and (accentColor or C.on) or C.off
+        dot.BackgroundColor3 = state[key] and Color3.new(1, 1, 1) or Color3.fromRGB(110, 110, 125)
+        if handlers[key] then handlers[key](state[key]) end
+    end)
+    return b
+end
+
+-- cột trái: chức năng
+makeToggle(leftCol, 1, "Fly", "✈️ Fly")
+makeToggle(leftCol, 2, "FlyNoclip", "🚪 Fly xuyên tường")
+makeToggle(leftCol, 3, "Speed", "🏃 Tốc độ")
+makeToggle(leftCol, 4, "HighJump", "🦘 Nhảy cao")
+makeToggle(leftCol, 5, "InfJump", "♾️ Nhảy vô tận")
+makeToggle(leftCol, 6, "ESP", "👁️ ESP viền")
+makeToggle(leftCol, 7, "ESPName", "🏷️ ESP tên")
+makeToggle(leftCol, 8, "ESPNPC", "🤖 ESP NPC")
+makeToggle(leftCol, 9, "ESPPlayer", "👤 ESP Người chơi", C.on)
+makeToggle(leftCol, 10, "Aimbot", "🎯 Aimbot")
+makeToggle(leftCol, 11, "FPS", "⚡ Fix lag")
+makeToggle(leftCol, 12, "FPSv2", "✨ Fix lag v2 (trắng)", C.on2)
+
+-- mặc định bật ESP Người chơi
+state.ESPPlayer = true
+
+-- cột phải: nhập số + hành động
+local function makeBox(order, placeholder, initial, minV, maxV, onChange)
+    local box = Instance.new("TextBox")
+    box.LayoutOrder = order
+    box.Size = UDim2.new(1, -8, 0, 32)
+    box.PlaceholderText = placeholder
+    box.Text = tostring(initial)
+    box.ClearTextOnFocus = false
+    style(box, C.input)
+    box.TextSize = 13
+    box.Parent = rightCol
+    box.FocusLost:Connect(function()
+        local v = tonumber(box.Text)
+        if v then onChange(math.clamp(v, minV, maxV)) end
+        box.Text = tostring(initial and (placeholder:find("bay") and travelSpeed or stepDistance) or initial)
+        box.Text = tostring(placeholder:find("bay") and travelSpeed or stepDistance)
+    end)
+    return box
+end
+
+makeBox(1, "Tốc độ bay (hiện tại: 60)", travelSpeed, 5, 300, function(v) travelSpeed = v end)
+makeBox(2, "Độ dài bước (hiện tại: 8)", stepDistance, 2, 50, function(v) stepDistance = v end)
+
+local function makeAction(order, label, color, callback)
+    local b = Instance.new("TextButton")
+    b.LayoutOrder = order
+    b.Size = UDim2.new(1, -8, 0, 32)
+    b.Text = label
+    style(b, color)
+    b.TextSize = 13
+    b.Parent = rightCol
+    b.MouseButton1Click:Connect(function() callback(b) end)
+    return b
+end
+
+makeAction(3, "💾 Lưu vị trí hiện tại", C.action, function(b)
+    if savePosition() then
+        b.Text = "✅ Đã lưu!"
+        task.delay(1.2, function()
+            if b.Parent then b.Text = "💾 Lưu vị trí hiện tại" end
+        end)
+    end
+end)
+makeAction(4, "⚡ TP thẳng đến vị trí lưu", C.action, teleportToSaved)
+makeAction(5, "🚀 Bay đến vị trí lưu", C.action, flyToSaved)
+makeAction(6, "📏 TP từng đoạn đến vị trí", C.action, stepTeleportToSaved)
+makeAction(7, "🛑 DỪNG di chuyển", C.danger, stopTravel)
+
+-- thu gọn / mở rộng
+local collapsed = false
 mini.MouseButton1Click:Connect(function()
-	body.Visible = not body.Visible
-	frame.Size = body.Visible and UDim2.fromOffset(230, 470) or UDim2.fromOffset(230, 32)
+    collapsed = not collapsed
+    body.Visible = not collapsed
+    main.Size = collapsed and UDim2.fromOffset(FULL_W, BAR_H) or UDim2.fromOffset(FULL_W, FULL_H)
+    mini.Text = collapsed and "+" or "–"
 end)
-
-local ON, OFF = Color3.fromRGB(40, 160, 80), Color3.fromRGB(60, 60, 70)
-local order = {
-	{ "Fly", "Fly" }, { "Speed", "Tốc độ" }, { "HighJump", "Nhảy cao" },
-	{ "InfJump", "Nhảy vô tận" }, { "ESP", "ESP viền" }, { "FPS", "Fix lag" }, { "Aimbot", "Aimbot" },
-}
-for _, item in ipairs(order) do
-	local key, label = item[1], item[2]
-	local b = Instance.new("TextButton")
-	b.Size = UDim2.new(1, -20, 0, 34)
-	b.BackgroundColor3 = OFF
-	b.Text = label .. ": TẮT"
-	b.TextColor3 = Color3.new(1, 1, 1)
-	b.Font = Enum.Font.Gotham
-	b.TextSize = 14
-	b.Parent = body
-	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
-	b.MouseButton1Click:Connect(function()
-		state[key] = not state[key]
-		b.BackgroundColor3 = state[key] and ON or OFF
-		b.Text = label .. (state[key] and ": BẬT" or ": TẮT")
-		handlers[key](state[key])
-	end)
-end
-
--- ĐIỀU KHIỂN TỌA ĐỘ ĐÃ LƯU
-local function makeActionButton(label, callback)
-	local b = Instance.new("TextButton")
-	b.Size = UDim2.new(1, -20, 0, 34)
-	b.BackgroundColor3 = Color3.fromRGB(55, 85, 115)
-	b.Text = label
-	b.TextColor3 = Color3.new(1, 1, 1)
-	b.Font = Enum.Font.Gotham
-	b.TextSize = 13
-	b.Parent = body
-	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
-	b.MouseButton1Click:Connect(callback)
-	return b
-end
-
-local speedBox = Instance.new("TextBox")
-speedBox.Size = UDim2.new(1, -20, 0, 32)
-speedBox.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
-speedBox.TextColor3 = Color3.new(1, 1, 1)
-speedBox.PlaceholderText = "Tốc độ di chuyển (hiện tại: 60)"
-speedBox.Text = tostring(travelSpeed)
-speedBox.ClearTextOnFocus = false
-speedBox.Font = Enum.Font.Gotham
-speedBox.TextSize = 13
-speedBox.Parent = body
-Instance.new("UICorner", speedBox).CornerRadius = UDim.new(0, 8)
-speedBox.FocusLost:Connect(function()
-	local value = tonumber(speedBox.Text)
-	if value then
-		travelSpeed = math.clamp(value, 5, 300)
-		speedBox.Text = tostring(travelSpeed)
-	else
-		speedBox.Text = tostring(travelSpeed)
-	end
-end)
-
-local stepBox = Instance.new("TextBox")
-stepBox.Size = UDim2.new(1, -20, 0, 32)
-stepBox.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
-stepBox.TextColor3 = Color3.new(1, 1, 1)
-stepBox.PlaceholderText = "Độ dài mỗi bước (hiện tại: 8)"
-stepBox.Text = tostring(stepDistance)
-stepBox.ClearTextOnFocus = false
-stepBox.Font = Enum.Font.Gotham
-stepBox.TextSize = 13
-stepBox.Parent = body
-Instance.new("UICorner", stepBox).CornerRadius = UDim.new(0, 8)
-stepBox.FocusLost:Connect(function()
-	local value = tonumber(stepBox.Text)
-	if value then
-		stepDistance = math.clamp(value, 2, 50)
-		stepBox.Text = tostring(stepDistance)
-	else
-		stepBox.Text = tostring(stepDistance)
-	end
-end)
-
-local savedLabel
-savedLabel = makeActionButton("Lưu vị trí hiện tại", function()
-	if savePosition() then
-		savedLabel.Text = "Đã lưu tọa độ!"
-		task.delay(1.5, function()
-			if savedLabel.Parent then savedLabel.Text = "Lưu vị trí hiện tại" end
-		end)
-	end
-end)
-makeActionButton("TP thẳng đến vị trí đã lưu", teleportToSaved)
-makeActionButton("Bay đến vị trí đã lưu", flyToSaved)
-makeActionButton("TP từng đoạn ngắn đến vị trí lưu", stepTeleportToSaved)
-makeActionButton("DỪNG di chuyển", stopTravel)
